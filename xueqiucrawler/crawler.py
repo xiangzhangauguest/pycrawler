@@ -1,3 +1,5 @@
+#! -*- coding: utf8 -*-
+
 import json
 import requests
 from collections import defaultdict
@@ -5,6 +7,7 @@ import re
 from operator import itemgetter
 
 import jieba
+import jieba.analyse
 
 def crawler(page):
     url = 'https://xueqiu.com/statuses/search.json?count=10&comment=0&symbol=WB&hl=0&source=all&sort=time&page={page}&_=1483939336621'.format(page=page)
@@ -21,10 +24,57 @@ def crawler(page):
     return html
 
 if __name__ == '__main__':
+    stop_words = [
+	' ',
+	' ',
+        '，',
+        '。',
+        '、',
+        '？',
+        '（',
+        '）',
+        '：',
+        '%',
+        '“',
+        '”',
+        '；',
+        '—',
+        '...',
+        '-',
+        '.',
+        '/',
+        '——',
+        '！',
+        '，：',
+        ';',
+        ',',
+        ':',
+        '：',
+        '(',
+        ')',
+        '【',
+        '】',
+        '+',
+        '《',
+        '》',
+        '!',
+        '他',
+        '她',
+        '的',
+        '了',
+        '是',
+        '和',
+        '在',
+        '我',
+        '都',
+        '也',
+        '这'
+    ]
     BEGIN_TIME = 1480521600
     complete = 0
     page = 1
     fenci_res = defaultdict(int)
+    tags_res = []
     while True:
         print page
         html = crawler(page)
@@ -44,18 +94,27 @@ if __name__ == '__main__':
 		text = text.replace('&nbsp', '')
                 text = re.sub('//.*?$', '', text).strip(' ')
                 f.write(text + '\n')
+		
+		# word cut
                 seg = jieba.cut(text, cut_all=False)
                 for word in seg:
                     fenci_res[word] += 1
                     f.write(word.encode('utf8') + ' ')
-                f.write('\n' + '\n')
+		
+		# tag
+		tags = jieba.analyse.extract_tags(text, topK=5)
+		#tags_res.append(tags)
+		f.write('\n' + '  '.join(tags).encode('utf8') + '\n')
+                f.write('\n')
 
         if complete:
             sorted_fenci_res = sorted(fenci_res.iteritems(), key=itemgetter(1), reverse=True)
             with open('fenci_result.log', 'wb') as f:
                 for word, freq in sorted_fenci_res:
+                    word = word.encode('utf8')
                     #print type(word)
-                    f.write('{word}: {freq}\n'.format(word=word.encode('utf8'), freq=freq))
+                    if word not in stop_words:
+			    f.write('{word}: {freq}\n'.format(word=word, freq=freq))
             break
         else:
             page += 1
