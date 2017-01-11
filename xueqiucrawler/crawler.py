@@ -5,6 +5,7 @@ import requests
 from collections import defaultdict
 import re
 from operator import itemgetter
+import datetime
 
 import jieba
 import jieba.analyse
@@ -16,19 +17,6 @@ def crawler(s_name, page):
         'Host': 'xueqiu.com',
         'Accept': 'application/json, text/javascript, */*; q=0.01',
         'Referer': 'https://xueqiu.com/S/{s_name}'.format(s_name=s_name),
-        'Cookie': 's=5r11gm4726; xq_r_token=e386c2c5442603d86294a718b13da436909b3f07; u=341483007204349; _sid=qaxE4GIPGdismx6xBWl5EHgKDa1WXh; xq_a_token=fa4b993b49cc434e60f8eed7fd93599969c092c1; xq_is_login=1; bid=f7e919156871e526c88cc617624b4f25_ixa9haoo; webp=0; Hm_lvt_1db88642e346389874251b5a1eded6e3=1483007469,1483009225,1483083745,1483094424; Hm_lpvt_1db88642e346389874251b5a1eded6e3=1483939336; __utmt=1; __utma=1.755614866.1482394030.1483934576.1483939336.9; __utmb=1.1.10.1483939336; __utmc=1; __utmz=1.1483083745.5.2.utmcsr=baidu|utmccn=(organic)|utmcmd=organic'
-    }
-
-    html = requests.get(url, headers=headers)
-    return html
-
-def crawlerZNH(page):
-    url = 'https://xueqiu.com/statuses/search.json?count=10&comment=0&symbol=ZNH&hl=0&source=all&sort=time&page={page}&_=1484102611941'.format(page=page)
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 6.3; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/55.0.2883.87 Safari/537.36',
-        'Host': 'xueqiu.com',
-        'Accept': 'application/json, text/javascript, */*; q=0.01',
-        'Referer': 'https://xueqiu.com/S/ZNH',
         'Cookie': 's=5r11gm4726; xq_r_token=e386c2c5442603d86294a718b13da436909b3f07; u=341483007204349; _sid=qaxE4GIPGdismx6xBWl5EHgKDa1WXh; xq_a_token=fa4b993b49cc434e60f8eed7fd93599969c092c1; xq_is_login=1; bid=f7e919156871e526c88cc617624b4f25_ixa9haoo; webp=0; Hm_lvt_1db88642e346389874251b5a1eded6e3=1483007469,1483009225,1483083745,1483094424; Hm_lpvt_1db88642e346389874251b5a1eded6e3=1483939336; __utmt=1; __utma=1.755614866.1482394030.1483934576.1483939336.9; __utmb=1.1.10.1483939336; __utmc=1; __utmz=1.1483083745.5.2.utmcsr=baidu|utmccn=(organic)|utmcmd=organic'
     }
 
@@ -99,6 +87,16 @@ if __name__ == '__main__':
                     if (msg['created_at'] / 1000) < BEGIN_TIME:
                         complete = 1
                         break
+                    if msg['user_id'] == -1:
+                        with open('debug/not_human.log', 'ab') as df:
+                            time = datetime.datetime.fromtimestamp(msg['created_at'] / 1000).strftime('%Y-%m-%d %H:%M:%S')
+                            df.write('{time}: {user}\n'.format(time=time, user=msg['user']['screen_name'].encode('utf8')))
+                        continue
+                    if msg['source'].encode('utf8') == '持仓盈亏':
+                        with open('debug/chicangyingkui.log', 'ab') as df:
+                            time = datetime.datetime.fromtimestamp(msg['created_at'] / 1000).strftime('%Y-%m-%d %H:%M:%S')
+                            df.write('{time}: {user}\n'.format(time=time, user=msg['user']['screen_name'].encode('utf8')))
+                        continue
                     text = msg['text'].encode('utf8')
                     f.write(text + '\n')
                     text = re.sub('<a.*?</a>', '', text)
@@ -107,7 +105,7 @@ if __name__ == '__main__':
                     text = text.replace('&nbsp', '')
                     text = re.sub('//.*?$', '', text).strip(' ')
                     f.write(text + '\n')
-            
+                    
                     # word cut
                     seg = jieba.cut(text, cut_all=False)
                     for word in seg:
