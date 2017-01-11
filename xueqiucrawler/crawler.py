@@ -9,6 +9,7 @@ import datetime
 
 import jieba
 import jieba.analyse
+from bosonnlp import BosonNLP
 
 def crawler(s_name, page):
     url = 'https://xueqiu.com/statuses/search.json?count=10&comment=0&symbol={s_name}&hl=0&source=all&sort=time&page={page}&_=1483939336621'.format(s_name=s_name, page=page)
@@ -24,6 +25,8 @@ def crawler(s_name, page):
     return html
 
 if __name__ == '__main__':
+    bosonnlp_token = 'r-RR3P--.12747.KxRTq0OJ_i0S'
+    b_nlp = BosonNLP(bosonnlp_token)
     stop_words = [
 	' ',
 	' ',
@@ -84,28 +87,28 @@ if __name__ == '__main__':
 
             with open('text_{s_name}.log'.format(s_name=s_name), 'ab') as f:
                 for msg in json_res['list']:
+                    created_at = datetime.datetime.fromtimestamp(msg['created_at'] / 1000).strftime('%Y-%m-%d %H:%M:%S')
                     if (msg['created_at'] / 1000) < BEGIN_TIME:
                         complete = 1
                         break
                     if msg['user_id'] == -1:
                         with open('debug/not_human.log', 'ab') as df:
-                            time = datetime.datetime.fromtimestamp(msg['created_at'] / 1000).strftime('%Y-%m-%d %H:%M:%S')
-                            df.write('{time}: {user}\n'.format(time=time, user=msg['user']['screen_name'].encode('utf8')))
+                            df.write('{time}: {user}\n'.format(time=created_at, user=msg['user']['screen_name'].encode('utf8')))
                         continue
                     if msg['source'].encode('utf8') == '持仓盈亏':
                         with open('debug/chicangyingkui.log', 'ab') as df:
-                            time = datetime.datetime.fromtimestamp(msg['created_at'] / 1000).strftime('%Y-%m-%d %H:%M:%S')
-                            df.write('{time}: {user}\n'.format(time=time, user=msg['user']['screen_name'].encode('utf8')))
+                            df.write('{time}: {user}\n'.format(time=created_at, user=msg['user']['screen_name'].encode('utf8')))
                         continue
-                    text = msg['text'].encode('utf8')
-                    f.write(text + '\n')
-                    text = re.sub('<a.*?</a>', '', text)
-                    text = re.sub('<img.*?>', '', text)
+                    text = msg['text']
+                    #f.write(text.encode('utf8') + '\n')
+                    #text = re.sub('<a.*?</a>', '', text)
+                    #text = re.sub('<img.*?>', '', text)
                     text = re.sub('<.*?>', '', text)
                     text = text.replace('&nbsp', '')
+                    text = text.replace('$', '')
                     text = re.sub('//.*?$', '', text).strip(' ')
-                    f.write(text + '\n')
-                    
+                    #f.write(text.encode('utf8') + '\n')
+                    """
                     # word cut
                     seg = jieba.cut(text, cut_all=False)
                     for word in seg:
@@ -116,7 +119,11 @@ if __name__ == '__main__':
                     tags = jieba.analyse.extract_tags(text, topK=5)
                     #tags_res.append(tags)
                     f.write('\n' + '  '.join(tags).encode('utf8') + '\n')
-                    f.write('\n')
+                    """
+                    # Summary
+                    result = b_nlp.summary('', text)
+                    f.write('[{time}]: {summary}'.format(time=created_at, summary=result.encode('utf8')))
+                    f.write('\n\n')
 
             if complete:
                 sorted_fenci_res = sorted(fenci_res.iteritems(), key=itemgetter(1), reverse=True)
