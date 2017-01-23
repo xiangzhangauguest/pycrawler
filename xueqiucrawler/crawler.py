@@ -6,6 +6,7 @@ from collections import defaultdict
 import re
 from operator import itemgetter
 import datetime
+import time
 
 import jieba
 import jieba.analyse
@@ -24,119 +25,149 @@ def crawler(s_name, page):
     html = requests.get(url, headers=headers)
     return html
 
+class Recorder:
+    keywords = ''
+    target_f = ''
+    
+    def get_keywords(self, keywords):
+        self.keywords = keywords
+
+    def init_rec_file(self, target_f):
+        self.target_f = target_f
+        with open(target_f, 'wb') as f:
+            keywords = [x.encode('GBK') for x in self.keywords]
+            f.write('date,' + ','.join(keywords) + '\n')
+
+    def record(self, content, start_time, end_time):
+        with open(self.target_f, 'ab') as f:
+            f.write(datetime.datetime.fromtimestamp(start_time).strftime('%Y-%m-%d') + "--" +
+                    datetime.datetime.fromtimestamp(end_time).strftime('%Y-%m-%d'))
+            for keyword in self.keywords:
+                freq = content[keyword]
+                f.write(',{freq}'.format(freq=freq))
+            f.write("\n")
+        
 if __name__ == '__main__':
-    bosonnlp_token = 'r-RR3P--.12747.KxRTq0OJ_i0S'
-    b_nlp = BosonNLP(bosonnlp_token)
-    stop_words = [
-	' ',
-	' ',
-        '，',
-        '。',
-        '、',
-        '？',
-        '（',
-        '）',
-        '：',
-        '%',
-        '“',
-        '”',
-        '；',
-        '—',
-        '...',
-        '-',
-        '.',
-        '/',
-        '——',
-        '！',
-        '，：',
-        ';',
-        ',',
-        ':',
-        '：',
-        '(',
-        ')',
-        '【',
-        '】',
-        '+',
-        '《',
-        '》',
-        '!',
-        '他',
-        '她',
-        '的',
-        '了',
-        '是',
-        '和',
-        '在',
-        '我',
-        '都',
-        '也',
-        '这'
-    ]
-    stocks_name = ['WB', 'ZNH']
+    # get stocks names
+    stocks_name = ['WB', 'SOHU', 'NTES']
+
+    # Get now timestamp
+    now_time = time.time()
+
+    # Files' name
+    dir_res = 'result/'
+    dir_debug = 'debug/'
+    f_wc_res = 'word_cut_result.csv'
+    f_text = 'text.log'
+    f_filtered = 'filered_msg.log'
+
+    f_stopwords = 'stopwords.txt'
+    f_keywords = 'keywords.txt'
+
+    # get nlp tool instance
+    #bosonnlp_token = 'r-RR3P--.12747.KxRTq0OJ_i0S'
+    #b_nlp = BosonNLP(bosonnlp_token)
+
+    # get stopwords
+    with open(f_stopwords) as f:
+        stopwords = f.readlines()
+        stopwords = [x.strip('\n') for x in stopwords]
+
+    # Get keywords and give it to jieba
     for s_name in stocks_name:
-        BEGIN_TIME = 1480521600
+        t = s_name + "_" + f_keywords
+        jieba.load_userdict(t)
+
+    # set filters
+    BEGIN_TIME = 1464710400 # 20160601
+    invalid_user_id = [-1]
+    invalid_source = ['持仓盈亏']
+
+    # Analyse related values
+    grain_size = 7 * 24 * 60 * 60 # 7 days
+
+    for s_name in stocks_name:
+        #Get stock's keywords
+        with open(s_name + "_" + f_keywords) as f:
+            keywords = [x.strip("\n").decode('utf8') for x in f.readlines()]
+
         complete = 0
-        page = 1
+        page = 0
         fenci_res = defaultdict(int)
         tags_res = []
-        while True:
-            html = crawler(s_name, page)
+
+        # Init a recorder for this stock
+        recorder = Recorder()
+        recorder.get_keywords(keywords)
+        recorder.init_rec_file(dir_res + s_name + "_" + f_wc_res)
+        
+        start_time = now_time
+        end_time = now_time - grain_size
+
+        while not complete:
+            # Get html content until content is valid
+            try_time = 0
+            while True:
+                html = crawler(s_name, page)
+                if html.status_code == 200:
+                    break
+                try_time += 1
+                if try_time > 10:
+                    print "tried 10 times but still not word, exist"
+                    break
+                print html
+                print html.text
+                print page
+                time.sleep(300)
+            page += 1
+            if page > 100:
+                complete = 1
 
             json_res = json.loads(html.text)
 
-            with open('text_{s_name}.log'.format(s_name=s_name), 'ab') as f:
+            with open(dir_res + '{s_name}_{f_text}'.format(s_name=s_name, f_text=f_text), 'ab') as f:
+
                 for msg in json_res['list']:
+
                     created_at = datetime.datetime.fromtimestamp(msg['created_at'] / 1000).strftime('%Y-%m-%d %H:%M:%S')
-                    if (msg['created_at'] / 1000) < BEGIN_TIME:
-                        complete = 1
-                        break
-                    if msg['user_id'] == -1:
-                        with open('debug/not_human.log', 'ab') as df:
-                            df.write('{time}: {user}\n'.format(time=created_at, user=msg['user']['screen_name'].encode('utf8')))
+                    
+                    # Rule of stop
+                    created_ts = msg['created_at'] / 1000
+                    if created_ts < end_time:
+                        recorder.record(fenci_res, start_time, end_time)
+                        if end_time < BEGIN_TIME:
+                            complete = 1
+                            break
+                        fenci_res = defaultdict(int)
+                        start_time = end_time
+                        end_time = start_time - grain_size
+                    # Filter
+                    if msg['user_id'] in invalid_user_id:
                         continue
-                    if msg['source'].encode('utf8') == '持仓盈亏':
-                        with open('debug/chicangyingkui.log', 'ab') as df:
-                            df.write('{time}: {user}\n'.format(time=created_at, user=msg['user']['screen_name'].encode('utf8')))
+                    if msg['source'].encode('utf8') in invalid_source:
                         continue
+
                     text = msg['text']
-                    #f.write(text.encode('utf8') + '\n')
-                    #text = re.sub('<a.*?</a>', '', text)
-                    #text = re.sub('<img.*?>', '', text)
                     text = re.sub('<.*?>', '', text)
                     text = text.replace('&nbsp', '')
-                    text = text.replace('$', '')
+                    #text = text.replace('$', '')
                     text = re.sub('//.*?$', '', text).strip(' ')
                     #f.write(text.encode('utf8') + '\n')
-                    """
+                    
                     # word cut
                     seg = jieba.cut(text, cut_all=False)
                     for word in seg:
                         fenci_res[word] += 1
-                        f.write(word.encode('utf8') + ' ')
                     
+                    """
                     # tag
                     tags = jieba.analyse.extract_tags(text, topK=5)
                     #tags_res.append(tags)
                     f.write('\n' + '  '.join(tags).encode('utf8') + '\n')
-                    """
+
                     # Summary
                     result = b_nlp.summary('', text)
                     f.write('[{time}]: {summary}'.format(time=created_at, summary=result.encode('utf8')))
                     f.write('\n\n')
+                    """
 
-            if complete:
-                sorted_fenci_res = sorted(fenci_res.iteritems(), key=itemgetter(1), reverse=True)
-                with open('fenci_result_{s_name}.csv'.format(s_name=s_name), 'wb') as f:
-                    for word, freq in sorted_fenci_res:
-                        #print type(word)
-                        word = word.encode('utf8')
-                        if word not in stop_words:
-                            try:
-                                word = word.decode('utf8').encode('GBK')
-                            except:
-                                pass
-                            f.write('{word},{freq}\n'.format(word=word, freq=freq))
-                break
-            else:
-                page += 1
