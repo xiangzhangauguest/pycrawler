@@ -4,75 +4,48 @@ import json
 import requests
 from collections import defaultdict
 import re
-from operator import itemgetter
-import datetime
 import time
+import datetime
 import operator
-
-import jieba
-import jieba.posseg as pseg
-import jieba.analyse
-from bosonnlp import BosonNLP
 
 from crawler import crawler
 
-class Recorder:
-    keywords = ''
-    target_f = ''
-    
-    def get_keywords(self, keywords):
-        self.keywords = keywords
-
-    def init_rec_file(self, target_f):
-        self.target_f = target_f
-        with open(target_f, 'wb') as f:
-            pass
-
-    def record(self, s_name, content):
-        with open(self.target_f, 'ab') as f:
-            if ',' in s_name:
-                s_name = s_name.replace(',', '|')
-            f.write(s_name)
-            sorted_content = sorted(content.items(), key=operator.itemgetter(1), reverse=True)
-            words = sorted_content[0:30]
-            for word, freq in words:
-                if word == 'total':
-                    continue
-                f.write(',{word}'.format(word=word.encode('GBK')))
-            f.write(',总量'.decode('utf8').encode('GBK') + '\n')
-            for word, freq in words:
-                if word == 'total':
-                    continue
-                f.write(',{freq}'.format(freq=freq))
-            f.write(',{total}'.format(total=content['total']))
-            f.write("\n")
-            total = content['total']
-            for word, freq in words:
-                if word == 'total':
-                    continue
-                f.write(',{percent:.2f}%'.format(percent=(100 * freq / total)))
-            f.write("\n")
-        
 if __name__ == '__main__':
-    # Get now timestamp
-    t = datetime.combine(datetime.date.today(), datetime.time.min)
-    last_midnight = time.mktime(t.timetuple())
-
     # Files' name
     dir_res = 'result/'
     f_res = 'daily_msg_count.csv'
+    f_res2 = 'daily_msg_count2.csv'
+
+    dir_backup = 'backup/'
     f_backup = 'backup.log'
+    
+    dir_last_timestamp = 'last_timestamp/'
+    f_last_timestamp = 'last_timestamp.log'
 
     f_stocks = 'stocks_list.txt'
-    
+
+    # Set end date = last midnight
+    yesterday_midnight = datetime.date.today().strftime("%s")
+
     # get stocks names
     with open(f_stocks) as f:
         stocks_name = f.readlines()
         stocks_name = [x.strip('\n') for x in stocks_name]
 
-    # get nlp tool instance
-    #bosonnlp_token = 'r-RR3P--.12747.KxRTq0OJ_i0S'
-    #b_nlp = BosonNLP(bosonnlp_token)
+    try:
+        with open(dir_res + f_res, 'rb'):
+            pass
+    except IOError:
+        t = [x.replace(',', '|') for x in stocks_name]
+        with open(dir_res + f_res, 'wb') as f:
+            f.write('日期,' + ','.join(t) + '\n')
+
+    try:
+        with open(dir_res + f_res2, 'rb'):
+            pass
+    except IOError:
+        with open(dir_res + f_res2, 'wb'):
+            f.write('日期,' + 'ticker,' + '总量\n')
 
     # set filters
     invalid_user_id = [-1]
@@ -80,16 +53,26 @@ if __name__ == '__main__':
 
     grain_size = 1 * 24 * 60 * 60
 
+    msg_count = defaultdict(dict)
+    date_list = []
+
     for str_s_name in stocks_name:
-        
         list_s_name = str_s_name.split(',')
         for s_name in list_s_name:
+            # Get last timestamp
+            try:
+                with open(dir_last_timestamp + s_name + '_' + f_last_timestamp, 'rb') as f:
+                    last_timestamp = int(f.readlines()[-1].strip('\n'))
+            except IOError:
+                last_timestamp = 1
+            write_last_timestamp = False
+            # Content backup buffer
+            # Model is: created_time\tuser_id\ttext\n
+            content_buffer = []
+
             complete = 0
             page = 0
 
-            start_time = last_midnight
-            end_time = start_time - grain_size
-            
             while not complete:
                 # Get html content until content is valid
                 try_time = 0
@@ -100,7 +83,7 @@ if __name__ == '__main__':
                         break
                     try_time += 1
                     if try_time > 10:
-                        print "tried 10 times but still not word, exist"
+                        print "tried 10 times, exist"
                         break
                     print html
                     print html.text
@@ -118,43 +101,59 @@ if __name__ == '__main__':
                         continue
                     if msg['source'].encode('utf8') in invalid_source:
                         continue
+                    # Start and end conditions
+                    create_time = msg['created_at'] / 1000
+                    if create_time >= yesterday_midnight:
+                        continue
+                    if not write_last_timestamp:
+                        with open(dir_last_timestamp + s_name + '_' + f_last_timestamp, 'ab') as f:
+                            f.write("{0}".format(create_time))
+                        write_last_timestamp = True
+                    if create_time < last_timestamp:
+                        complete = 1
+                        break
 
-                    text = msg['text']
-                    text = re.sub('<.*?>', '', text)
-                    text = text.replace('&nbsp', '')
-                    #text = text.replace('$', '')
-                    text = re.sub('//.*?$', '', text).strip(' ')
-                    #f.write(text.encode('utf8') + '\n')
-                    
-                    # word cut
-                    #seg = jieba.cut(text, cut_all=False)
-                    seg = pseg.cut(text)
-                    showed_words = []
-                    for word, flag in seg:
-                        if word in stopwords:
-                            continue
-                        # Longer than 2 chinese characters.
-                        if len(word) < 2:
-                            continue
-                        # Must be noun.
-                        if 'n' not in flag:
-                            continue
-                        # Remove duplicate.
-                        if word in showed_words:
-                            continue
-                        fenci_res[word] += 1
-                        showed_words.append(word)
-                    fenci_res['total'] += 1
-                    """
-                    # tag
-                    tags = jieba.analyse.extract_tags(text, topK=5)
-                    #tags_res.append(tags)
-                    f.write('\n' + '  '.join(tags).encode('utf8') + '\n')
+                    # Backup
+                    content_buffer.append(
+                        {
+                            'user_id': msg['user_id'],
+                            'created_time': create_time,
+                            'text': msg['text']
+                        }
+                    )
 
-                    # Summary
-                    result = b_nlp.summary('', text)
-                    f.write('[{time}]: {summary}'.format(time=created_at, summary=result.encode('utf8')))
-                    f.write('\n\n')
-                    """
-        recorder.record(str_s_name, fenci_res)
+                    # Count msg
+                    date = datetime.datetime.fromtimestamp(create_time).strftime('%Y%m%d')
+                    date_list.append(date)
+                    try:
+                        msg_count[date][str_s_name] += 1
+                    except:
+                        msg_count[date][str_s_name] = 1
+            with open(dir_backup + s_name + '_' + f_backup, 'ab') as f:
+                while content_buffer:
+                    rec = content_buffer.pop()
+                    f.write("{0}\t{1}\t{2}\n".format(
+                            rec['created_time'], rec['user_id'], rec['text'].encode('utf8'))
+                    )
+                
+    with open(dir_res + f_res, 'ab') as f:
+        for date in date_list:
+            if date < '20160101':
+                continue
+            f.write(date[:4] + '/' + date[4:6] + '/' + date[6:])
+            for stock in stocks_name:
+                try:
+                    count = msg_count[date][stock]
+                except KeyError:
+                    count = 0
+                f.write(',{0}'.format(count))
+            f.write('\n')
 
+    with open(dir_res + f_res2, 'ab') as f:
+        for date in msg_count:
+            if date < '20160101':
+                continue
+            for stock in msg_count[date]:
+                f.write('{0},{1},{2}'.format(
+                        date[:4] + '/' + date[4:6] + '/' + date[6:], stock.replace(',', '|'), msg_count[date][stock])
+                )

@@ -71,9 +71,6 @@ if __name__ == '__main__':
 
     f_user_defined_dict = 'user_defined_dict.txt'
 
-    # Use user defined dictionary.
-    jieba.load_userdict(f_user_defined_dict)
-
     # get stocks names
     with open(f_stocks) as f:
         stocks_name = f.readlines()
